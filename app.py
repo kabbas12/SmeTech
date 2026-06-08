@@ -1,254 +1,245 @@
-# app.py
-# A Simple SME Lending Management System
-
-import streamlit as st
-import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
-import uuid
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy import optimize
+import warnings
+warnings.filterwarnings('ignore')
 
-# ------------------- 1. Configuration & Session State -------------------
-st.set_page_config(page_title="SME Lending System", layout="wide")
-st.title("💰 SME Lending System")
+# Set beautiful styling
+sns.set_style("whitegrid")
+plt.rcParams['figure.figsize'] = (12, 8)
 
-# Initialize session state to store data (simulating a database)
-if 'clients' not in st.session_state:
-    # Sample data structure for clients
-    st.session_state.clients = pd.DataFrame({
-        'client_id': [],
-        'company_name': [],
-        'annual_revenue': [],
-        'credit_score': [],
-        'loan_amount_requested': [],
-        'status': [],  # Pending, Approved, Rejected, Disbursed
-        'interest_rate': [],
-        'monthly_emi': [],
-        'remaining_balance': []
-    })
-
-if 'loans' not in st.session_state:
-    st.session_state.loans = pd.DataFrame({
-        'loan_id': [],
-        'client_id': [],
-        'amount': [],
-        'interest_rate': [],
-        'start_date': [],
-        'remaining_balance': [],
-        'status': [] # Active, Closed
-    })
-
-# ------------------- 2. Helper Functions (Logic) -------------------
-
-def calculate_credit_score(annual_revenue, requested_amount):
-    """
-    Simple rule-based credit scoring.
-    High revenue relative to loan amount = higher score.
-    """
-    ratio = annual_revenue / requested_amount if requested_amount > 0 else 0
-    if ratio >= 3:
-        return 750  # Low Risk
-    elif ratio >= 1.5:
-        return 650  # Medium Risk
-    else:
-        return 550  # High Risk
-
-def calculate_interest_and_emi(credit_score, principal, tenure_months=12):
-    """
-    Risk-based pricing.
-    Higher credit score = lower interest rate.
-    Calculates EMI using simple amortization.
-    """
-    if credit_score >= 700:
-        rate = 0.08  # 8%
-    elif credit_score >= 600:
-        rate = 0.12  # 12%
-    else:
-        rate = 0.18  # 18% (High risk)
+class AdvancedEMICalculator:
+    """Advanced EMI Calculator using multiple scientific libraries"""
     
-    # Monthly Interest Rate
-    r = rate / 12
-    # EMI Formula
-    emi = principal * r * ((1+r)**tenure_months) / (((1+r)**tenure_months) - 1)
-    return rate * 100, emi
-
-def approve_loan(credit_score, requested_amount, annual_revenue):
-    """Decision logic: Approve or Reject"""
-    if credit_score < 600:
-        return "Rejected", "Credit score below threshold (600)."
-    
-    max_loan_limit = annual_revenue * 0.5  # Bank lends max 50% of annual revenue
-    if requested_amount > max_loan_limit:
-        return "Rejected", f"Requested amount exceeds 50% of annual revenue (Max: ${max_loan_limit:,.2f})."
-    
-    return "Approved", "Eligible for loan."
-
-# ------------------- 3. Sidebar Navigation -------------------
-st.sidebar.header("Navigation")
-menu = st.sidebar.selectbox("Select Module", 
-    ["New Application", "Credit Scoring & Approval", "Disbursement", "Client List", "Outstanding Loans & Repayment"])
-
-# ------------------- 4. Module Implementations -------------------
-
-# --- MODULE 1: New Application ---
-if menu == "New Application":
-    st.header("📝 SME Loan Application")
-    with st.form("application_form"):
-        col1, col2 = st.columns(2)
-        with col1:
-            company = st.text_input("Company Name")
-            revenue = st.number_input("Annual Revenue (USD)", min_value=0, step=1000)
-        with col2:
-            request_amount = st.number_input("Loan Amount Requested (USD)", min_value=0, step=1000)
+    def __init__(self, principal, annual_rate, tenure_years):
+        self.principal = principal
+        self.annual_rate = annual_rate
+        self.tenure_years = tenure_years
+        self.tenure_months = int(tenure_years * 12)
+        self.monthly_rate = (annual_rate / 100) / 12
         
-        submitted = st.form_submit_button("Submit Application")
+    def calculate_emi(self):
+        """Calculate EMI"""
+        if self.monthly_rate == 0:
+            return self.principal / self.tenure_months
+        else:
+            return self.principal * self.monthly_rate * \
+                   (1 + self.monthly_rate)**self.tenure_months / \
+                   ((1 + self.monthly_rate)**self.tenure_months - 1)
+    
+    def create_amortization_dataframe(self):
+        """Create full amortization schedule as DataFrame"""
+        emi = self.calculate_emi()
         
-        if submitted and company:
-            # Auto-calculate credit score based on financials
-            score = calculate_credit_score(revenue, request_amount)
-            client_id = str(uuid.uuid4())[:8]
-            
-            new_client = pd.DataFrame([{
-                'client_id': client_id,
-                'company_name': company,
-                'annual_revenue': revenue,
-                'credit_score': score,
-                'loan_amount_requested': request_amount,
-                'status': 'Pending',
-                'interest_rate': 0,
-                'monthly_emi': 0,
-                'remaining_balance': 0
-            }])
-            
-            st.session_state.clients = pd.concat([st.session_state.clients, new_client], ignore_index=True)
-            st.success(f"Application Submitted! Your Application ID: {client_id}")
-            st.info(f"Calculated Credit Score: {score}. Proceed to Approval Module.")
+        data = {
+            'Month': np.arange(1, self.tenure_months + 1),
+            'EMI': np.full(self.tenure_months, emi),
+            'Interest': np.zeros(self.tenure_months),
+            'Principal': np.zeros(self.tenure_months),
+            'Balance': np.zeros(self.tenure_months)
+        }
+        
+        balance = self.principal
+        for month in range(self.tenure_months):
+            interest = balance * self.monthly_rate
+            principal_paid = emi - interest if month < self.tenure_months - 1 else balance
+            data['Interest'][month] = interest
+            data['Principal'][month] = principal_paid
+            data['Balance'][month] = balance
+            balance -= principal_paid
+        
+        df = pd.DataFrame(data)
+        df['Cumulative_Interest'] = df['Interest'].cumsum()
+        df['Cumulative_Principal'] = df['Principal'].cumsum()
+        
+        return df.round(2)
+    
+    def create_dashboard(self):
+        """Create comprehensive dashboard with all visualizations"""
+        df = self.create_amortization_dataframe()
+        emi = self.calculate_emi()
+        
+        # Create figure with GridSpec for complex layout
+        fig = plt.figure(figsize=(16, 10))
+        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+        
+        # Main title
+        fig.suptitle(f'Loan EMI Analysis Dashboard\n'
+                    f'₹{self.principal:,.0f} at {self.annual_rate}% for {self.tenure_years} years',
+                    fontsize=16, fontweight='bold')
+        
+        # 1. Loan Balance Over Time (top left)
+        ax1 = fig.add_subplot(gs[0, :2])
+        ax1.plot(df['Month'], df['Balance'], 'b-', linewidth=2, label='Remaining Balance')
+        ax1.fill_between(df['Month'], 0, df['Balance'], alpha=0.3)
+        ax1.set_xlabel('Months')
+        ax1.set_ylabel('Balance (₹)')
+        ax1.set_title('Loan Amortization Schedule')
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 2. Key Metrics (top right)
+        ax2 = fig.add_subplot(gs[0, 2])
+        metrics = {
+            'EMI': f'₹{emi:,.0f}',
+            'Total Payment': f'₹{df["EMI"].sum():,.0f}',
+            'Total Interest': f'₹{df["Interest"].sum():,.0f}',
+            'Interest Ratio': f'{(df["Interest"].sum()/self.principal)*100:.1f}%'
+        }
+        ax2.axis('off')
+        y_pos = 0.8
+        for key, value in metrics.items():
+            ax2.text(0.1, y_pos, f'{key}:', fontsize=11, fontweight='bold')
+            ax2.text(0.5, y_pos, value, fontsize=11)
+            y_pos -= 0.15
+        ax2.set_title('Key Metrics', fontsize=12, fontweight='bold')
+        
+        # 3. Monthly Breakdown (middle left)
+        ax3 = fig.add_subplot(gs[1, :2])
+        ax3.bar(df['Month'][:24], df['Principal'][:24], label='Principal', 
+                alpha=0.7, color='#2ecc71', width=0.8)
+        ax3.bar(df['Month'][:24], df['Interest'][:24], bottom=df['Principal'][:24],
+                label='Interest', alpha=0.7, color='#e74c3c', width=0.8)
+        ax3.set_xlabel('Months')
+        ax3.set_ylabel('Amount (₹)')
+        ax3.set_title('Monthly Payment Breakdown (First 24 months)')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3, axis='y')
+        
+        # 4. Cumulative Payments (middle right)
+        ax4 = fig.add_subplot(gs[1, 2])
+        ax4.stackplot(df['Month'], df['Cumulative_Principal'], df['Cumulative_Interest'],
+                     labels=['Principal', 'Interest'], alpha=0.7,
+                     colors=['#2ecc71', '#e74c3c'])
+        ax4.set_xlabel('Months')
+        ax4.set_ylabel('Cumulative Amount (₹)')
+        ax4.set_title('Cumulative Payments')
+        ax4.legend(loc='upper left')
+        ax4.grid(True, alpha=0.3)
+        
+        # 5. Heatmap of Interest Payment (bottom)
+        ax5 = fig.add_subplot(gs[2, :])
+        
+        # Create heatmap data (reshape into years)
+        years = self.tenure_months // 12
+        if years > 0:
+            heatmap_data = df['Interest'].values[:years*12].reshape(years, 12)
+            sns.heatmap(heatmap_data, annot=True, fmt='.0f', cmap='YlOrRd',
+                       xticklabels=[f'M{i+1}' for i in range(12)],
+                       yticklabels=[f'Year {i+1}' for i in range(years)],
+                       ax=ax5, cbar_kws={'label': 'Interest Payment (₹)'})
+            ax5.set_title('Interest Payment Heatmap (Monthly)', fontsize=12, fontweight='bold')
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return df
+    
+    def sensitivity_analysis(self):
+        """Perform sensitivity analysis on interest rates"""
+        rates = np.linspace(max(0, self.annual_rate - 5), 
+                           self.annual_rate + 5, 11)
+        
+        results = []
+        for rate in rates:
+            calc = AdvancedEMICalculator(self.principal, rate, self.tenure_years)
+            emi = calc.calculate_emi()
+            df = calc.create_amortization_dataframe()
+            results.append({
+                'Rate (%)': rate,
+                'EMI': emi,
+                'Total Interest': df['Interest'].sum(),
+                'Total Payment': df['EMI'].sum()
+            })
+        
+        sensitivity_df = pd.DataFrame(results)
+        
+        # Plot sensitivity
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        
+        axes[0].plot(sensitivity_df['Rate (%)'], sensitivity_df['EMI'], 
+                    'bo-', linewidth=2, markersize=8)
+        axes[0].set_xlabel('Interest Rate (%)')
+        axes[0].set_ylabel('Monthly EMI (₹)')
+        axes[0].set_title('EMI Sensitivity to Interest Rate')
+        axes[0].grid(True, alpha=0.3)
+        
+        axes[1].plot(sensitivity_df['Rate (%)'], sensitivity_df['Total Interest'], 
+                    'ro-', linewidth=2, markersize=8)
+        axes[1].set_xlabel('Interest Rate (%)')
+        axes[1].set_ylabel('Total Interest (₹)')
+        axes[1].set_title('Total Interest Sensitivity')
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.suptitle('Sensitivity Analysis (±5% from base rate)', fontsize=12, fontweight='bold')
+        plt.tight_layout()
+        plt.show()
+        
+        return sensitivity_df
 
-# --- MODULE 2: Credit Scoring & Approval ---
-elif menu == "Credit Scoring & Approval":
-    st.header("⚖️ Underwriting & Decision")
+def main():
+    print("\n" + "="*70)
+    print("     ADVANCED EMI CALCULATOR WITH SCIENTIFIC LIBRARIES")
+    print("     (NumPy, Pandas, Matplotlib, Seaborn, SciPy)")
+    print("="*70)
     
-    pending_clients = st.session_state.clients[st.session_state.clients['status'] == 'Pending']
+    # Get inputs
+    principal = float(input("\nEnter loan amount (₹): "))
+    annual_rate = float(input("Enter annual interest rate (%): "))
+    tenure_years = float(input("Enter loan tenure (in years): "))
     
-    if pending_clients.empty:
-        st.info("No pending applications.")
-    else:
-        for idx, row in pending_clients.iterrows():
-            with st.expander(f"{row['company_name']} (Score: {row['credit_score']}) - Request: ${row['loan_amount_requested']:,.0f}"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Annual Revenue", f"${row['annual_revenue']:,.0f}")
-                    st.metric("Credit Score", row['credit_score'])
-                
-                # Decision Logic
-                status, reason = approve_loan(row['credit_score'], row['loan_amount_requested'], row['annual_revenue'])
-                
-                if status == "Approved":
-                    interest, emi = calculate_interest_and_emi(row['credit_score'], row['loan_amount_requested'])
-                    st.success(f"✅ Decision: {status}")
-                    st.caption(reason)
-                    st.metric("Proposed Interest Rate", f"{interest:.1f}%")
-                    st.metric("Monthly EMI (12 Months)", f"${emi:,.2f}")
-                    
-                    if st.button(f"Approve {row['company_name']}", key=f"approve_{row['client_id']}"):
-                        # Update records
-                        st.session_state.clients.loc[idx, 'status'] = 'Approved'
-                        st.session_state.clients.loc[idx, 'interest_rate'] = interest
-                        st.session_state.clients.loc[idx, 'monthly_emi'] = emi
-                        st.session_state.clients.loc[idx, 'remaining_balance'] = row['loan_amount_requested']
-                        st.rerun()
-                else:
-                    st.error(f"❌ Decision: {status}")
-                    st.warning(reason)
-                    if st.button(f"Reject {row['company_name']}", key=f"reject_{row['client_id']}"):
-                        st.session_state.clients.loc[idx, 'status'] = 'Rejected'
-                        st.rerun()
+    # Create calculator instance
+    calc = AdvancedEMICalculator(principal, annual_rate, tenure_years)
+    
+    # Calculate EMI
+    emi = calc.calculate_emi()
+    df = calc.create_amortization_dataframe()
+    
+    # Display summary
+    print("\n" + "-"*70)
+    print(f"📊 LOAN SUMMARY")
+    print("-"*70)
+    print(f"Loan Amount:     ₹{principal:,.2f}")
+    print(f"Interest Rate:   {annual_rate}%")
+    print(f"Tenure:          {tenure_years} years ({calc.tenure_months} months)")
+    print(f"Monthly EMI:     ₹{emi:,.2f}")
+    print(f"Total Payment:   ₹{df['EMI'].sum():,.2f}")
+    print(f"Total Interest:  ₹{df['Interest'].sum():,.2f}")
+    print(f"Interest Ratio:  {(df['Interest'].sum()/principal)*100:.1f}%")
+    print("-"*70)
+    
+    # Show options
+    print("\n📈 AVAILABLE ANALYSES:")
+    print("1. Show Amortization Table")
+    print("2. Show Dashboard Visualizations")
+    print("3. Show Sensitivity Analysis")
+    print("4. Export Data to CSV")
+    print("5. All of the above")
+    
+    choice = input("\nSelect option (1-5): ")
+    
+    if choice in ['1', '5']:
+        pd.set_option('display.max_rows', 20)
+        print("\n" + df.to_string(index=False))
+        
+        # Show statistics
+        print("\n📊 STATISTICAL SUMMARY:")
+        print(df[['Interest', 'Principal']].describe())
+    
+    if choice in ['2', '5']:
+        calc.create_dashboard()
+    
+    if choice in ['3', '5']:
+        sensitivity_df = calc.sensitivity_analysis()
+        print("\n📊 SENSITIVITY ANALYSIS RESULTS:")
+        print(sensitivity_df.to_string(index=False))
+    
+    if choice in ['4', '5']:
+        filename = f"emi_analysis_{principal}_{annual_rate}_{tenure_years}.csv"
+        df.to_csv(filename, index=False)
+        print(f"\n✅ Data exported to {filename}")
 
-# --- MODULE 3: Disbursement ---
-elif menu == "Disbursement":
-    st.header("💸 Disbursement")
-    approved_clients = st.session_state.clients[st.session_state.clients['status'] == 'Approved']
-    
-    if approved_clients.empty:
-        st.info("No approved loans waiting for disbursement.")
-    else:
-        for idx, row in approved_clients.iterrows():
-            st.write(f"**{row['company_name']}** - Approved Amount: ${row['loan_amount_requested']:,.0f}")
-            if st.button(f"Disburse to {row['company_name']}", key=f"disburse_{row['client_id']}"):
-                st.session_state.clients.loc[idx, 'status'] = 'Disbursed'
-                # Create loan record
-                new_loan = pd.DataFrame([{
-                    'loan_id': str(uuid.uuid4())[:8],
-                    'client_id': row['client_id'],
-                    'amount': row['loan_amount_requested'],
-                    'interest_rate': row['interest_rate'],
-                    'start_date': datetime.now().date(),
-                    'remaining_balance': row['loan_amount_requested'],
-                    'status': 'Active'
-                }])
-                st.session_state.loans = pd.concat([st.session_state.loans, new_loan], ignore_index=True)
-                st.success(f"${row['loan_amount_requested']:,.0f} disbursed successfully!")
-                st.rerun()
-
-# --- MODULE 4: Client List View ---
-elif menu == "Client List":
-    st.header("📇 Client Portfolio")
-    
-    # Filter options
-    status_filter = st.multiselect("Filter by Status", options=['Pending', 'Approved', 'Rejected', 'Disbursed'], default=['Disbursed'])
-    
-    filtered_df = st.session_state.clients[st.session_state.clients['status'].isin(status_filter)]
-    
-    # Display
-    st.dataframe(filtered_df[['client_id', 'company_name', 'annual_revenue', 'credit_score', 'loan_amount_requested', 'status', 'interest_rate']], use_container_width=True)
-    
-    # Stats
-    col1, col2, col3 = st.columns(3)
-    total_loans = st.session_state.clients[st.session_state.clients['status'] == 'Disbursed']['loan_amount_requested'].sum()
-    col1.metric("Total Disbursed Portfolio", f"${total_loans:,.0f}")
-    col2.metric("Avg Credit Score (Disbursed)", round(st.session_state.clients[st.session_state.clients['status'] == 'Disbursed']['credit_score'].mean(), 0))
-
-# --- MODULE 5: Outstanding & Repayment ---
-elif menu == "Outstanding Loans & Repayment":
-    st.header("📊 Loan Repayment Tracker")
-    
-    active_loans = st.session_state.loans[st.session_state.loans['status'] == 'Active']
-    
-    if active_loans.empty:
-        st.info("No active loans.")
-    else:
-        for idx, loan in active_loans.iterrows():
-            # Get client name
-            client_row = st.session_state.clients[st.session_state.clients['client_id'] == loan['client_id']]
-            client_name = client_row['company_name'].values[0] if not client_row.empty else "Unknown"
-            
-            with st.container():
-                st.subheader(f"🏢 {client_name}")
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Principal Left", f"${loan['remaining_balance']:,.2f}")
-                col2.metric("Interest Rate", f"{loan['interest_rate']:.1f}%")
-                
-                # Simulate EMI calculation (Monthly)
-                r_monthly = (loan['interest_rate'] / 100) / 12
-                # Assume 12 months tenure left dynamically for simplicity, or fixed based on original loan
-                emi = loan['remaining_balance'] * (r_monthly * (1+r_monthly)**12) / (((1+r_monthly)**12) - 1)
-                col3.metric("Est. Monthly EMI", f"${emi:,.2f}")
-                
-                # Payment simulation
-                payment = st.number_input(f"Payment Amount for {client_name}", min_value=0.0, step=100.0, key=f"pay_{loan['loan_id']}")
-                if st.button("Record Payment", key=f"rec_{loan['loan_id']}"):
-                    if payment >= emi * 0.9: # Accept payments close to EMI
-                        new_balance = max(0, loan['remaining_balance'] - payment)
-                        # Update Loans DF
-                        st.session_state.loans.loc[idx, 'remaining_balance'] = new_balance
-                        # Update Clients DF
-                        st.session_state.clients.loc[st.session_state.clients['client_id'] == loan['client_id'], 'remaining_balance'] = new_balance
-                        
-                        if new_balance <= 0:
-                            st.session_state.loans.loc[idx, 'status'] = 'Closed'
-                            st.session_state.clients.loc[st.session_state.clients['client_id'] == loan['client_id'], 'status'] = 'Closed'
-                            st.success("Loan fully repaid!")
-                        else:
-                            st.success(f"Payment of ${payment:,.2f} recorded. Remaining: ${new_balance:,.2f}")
-                        st.rerun()
-                    else:
-                        st.error("Payment amount is less than the minimum EMI.")
+if __name__ == "__main__":
+    main()
