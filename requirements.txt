@@ -1,7 +1,5 @@
-numpy
+streamlit
 pandas
-matplotlib.pyplot
-seaborn
-optimize
-warnings
-
+numpy
+plotly.graph_objects
+plotly.express
