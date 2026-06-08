@@ -1,245 +1,412 @@
-import numpy as np
+# future_value_calculator.py
+
+import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-from scipy import optimize
-import warnings
-warnings.filterwarnings('ignore')
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+from datetime import datetime, timedelta
 
-# Set beautiful styling
-sns.set_style("whitegrid")
-plt.rcParams['figure.figsize'] = (12, 8)
+# Set page configuration
+st.set_page_config(
+    page_title="Future Value Calculator",
+    page_icon="💰",
+    layout="wide"
+)
 
-class AdvancedEMICalculator:
-    """Advanced EMI Calculator using multiple scientific libraries"""
+# Title and description
+st.title("💰 Future Value Calculator")
+st.markdown("### Calculate the future value of your investment with interactive charts")
+st.markdown("---")
+
+# Create sidebar for inputs
+st.sidebar.header("Investment Parameters")
+
+# Input parameters
+current_investment = st.sidebar.number_input(
+    "Current Investment ($)",
+    min_value=0.0,
+    value=10000.0,
+    step=1000.0,
+    format="%0.2f"
+)
+
+monthly_contribution = st.sidebar.number_input(
+    "Monthly Contribution ($)",
+    min_value=0.0,
+    value=500.0,
+    step=100.0,
+    format="%0.2f"
+)
+
+interest_rate = st.sidebar.number_input(
+    "Annual Interest Rate (%)",
+    min_value=0.0,
+    max_value=30.0,
+    value=8.0,
+    step=0.5,
+    format="%0.1f"
+)
+
+tenure_years = st.sidebar.number_input(
+    "Investment Tenure (Years)",
+    min_value=1,
+    max_value=50,
+    value=10,
+    step=1
+)
+
+compounding_frequency = st.sidebar.selectbox(
+    "Compounding Frequency",
+    ["Annually", "Semi-Annually", "Quarterly", "Monthly"]
+)
+
+# Advanced options
+st.sidebar.markdown("---")
+st.sidebar.subheader("Advanced Options")
+inflation_rate = st.sidebar.number_input(
+    "Expected Inflation Rate (%)",
+    min_value=0.0,
+    max_value=20.0,
+    value=2.0,
+    step=0.5,
+    format="%0.1f"
+)
+
+tax_rate = st.sidebar.number_input(
+    "Tax Rate on Returns (%)",
+    min_value=0.0,
+    max_value=50.0,
+    value=0.0,
+    step=5.0,
+    format="%0.1f"
+)
+
+# Calculate compounding periods per year
+compounding_map = {
+    "Annually": 1,
+    "Semi-Annually": 2,
+    "Quarterly": 4,
+    "Monthly": 12
+}
+n_per_year = compounding_map[compounding_frequency]
+
+# Convert annual rate to periodic rate
+periodic_rate = (interest_rate / 100) / n_per_year
+total_periods = tenure_years * n_per_year
+
+# Calculate future value
+def calculate_future_value(principal, monthly_contrib, rate_per_period, n_periods, n_per_year, monthly_contrib_flag=True):
+    """
+    Calculate future value with monthly contributions
+    """
+    # Future value of initial investment
+    fv_principal = principal * (1 + rate_per_period) ** n_periods
     
-    def __init__(self, principal, annual_rate, tenure_years):
-        self.principal = principal
-        self.annual_rate = annual_rate
-        self.tenure_years = tenure_years
-        self.tenure_months = int(tenure_years * 12)
-        self.monthly_rate = (annual_rate / 100) / 12
+    if monthly_contrib_flag and monthly_contrib > 0:
+        # Convert monthly contribution to periodic contribution
+        periodic_contrib = monthly_contrib / (n_per_year / 12)
         
-    def calculate_emi(self):
-        """Calculate EMI"""
-        if self.monthly_rate == 0:
-            return self.principal / self.tenure_months
+        # Future value of periodic contributions
+        if rate_per_period == 0:
+            fv_contributions = periodic_contrib * n_periods
         else:
-            return self.principal * self.monthly_rate * \
-                   (1 + self.monthly_rate)**self.tenure_months / \
-                   ((1 + self.monthly_rate)**self.tenure_months - 1)
+            fv_contributions = periodic_contrib * ((1 + rate_per_period) ** n_periods - 1) / rate_per_period
+    else:
+        fv_contributions = 0
     
-    def create_amortization_dataframe(self):
-        """Create full amortization schedule as DataFrame"""
-        emi = self.calculate_emi()
-        
-        data = {
-            'Month': np.arange(1, self.tenure_months + 1),
-            'EMI': np.full(self.tenure_months, emi),
-            'Interest': np.zeros(self.tenure_months),
-            'Principal': np.zeros(self.tenure_months),
-            'Balance': np.zeros(self.tenure_months)
-        }
-        
-        balance = self.principal
-        for month in range(self.tenure_months):
-            interest = balance * self.monthly_rate
-            principal_paid = emi - interest if month < self.tenure_months - 1 else balance
-            data['Interest'][month] = interest
-            data['Principal'][month] = principal_paid
-            data['Balance'][month] = balance
-            balance -= principal_paid
-        
-        df = pd.DataFrame(data)
-        df['Cumulative_Interest'] = df['Interest'].cumsum()
-        df['Cumulative_Principal'] = df['Principal'].cumsum()
-        
-        return df.round(2)
-    
-    def create_dashboard(self):
-        """Create comprehensive dashboard with all visualizations"""
-        df = self.create_amortization_dataframe()
-        emi = self.calculate_emi()
-        
-        # Create figure with GridSpec for complex layout
-        fig = plt.figure(figsize=(16, 10))
-        gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
-        
-        # Main title
-        fig.suptitle(f'Loan EMI Analysis Dashboard\n'
-                    f'₹{self.principal:,.0f} at {self.annual_rate}% for {self.tenure_years} years',
-                    fontsize=16, fontweight='bold')
-        
-        # 1. Loan Balance Over Time (top left)
-        ax1 = fig.add_subplot(gs[0, :2])
-        ax1.plot(df['Month'], df['Balance'], 'b-', linewidth=2, label='Remaining Balance')
-        ax1.fill_between(df['Month'], 0, df['Balance'], alpha=0.3)
-        ax1.set_xlabel('Months')
-        ax1.set_ylabel('Balance (₹)')
-        ax1.set_title('Loan Amortization Schedule')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # 2. Key Metrics (top right)
-        ax2 = fig.add_subplot(gs[0, 2])
-        metrics = {
-            'EMI': f'₹{emi:,.0f}',
-            'Total Payment': f'₹{df["EMI"].sum():,.0f}',
-            'Total Interest': f'₹{df["Interest"].sum():,.0f}',
-            'Interest Ratio': f'{(df["Interest"].sum()/self.principal)*100:.1f}%'
-        }
-        ax2.axis('off')
-        y_pos = 0.8
-        for key, value in metrics.items():
-            ax2.text(0.1, y_pos, f'{key}:', fontsize=11, fontweight='bold')
-            ax2.text(0.5, y_pos, value, fontsize=11)
-            y_pos -= 0.15
-        ax2.set_title('Key Metrics', fontsize=12, fontweight='bold')
-        
-        # 3. Monthly Breakdown (middle left)
-        ax3 = fig.add_subplot(gs[1, :2])
-        ax3.bar(df['Month'][:24], df['Principal'][:24], label='Principal', 
-                alpha=0.7, color='#2ecc71', width=0.8)
-        ax3.bar(df['Month'][:24], df['Interest'][:24], bottom=df['Principal'][:24],
-                label='Interest', alpha=0.7, color='#e74c3c', width=0.8)
-        ax3.set_xlabel('Months')
-        ax3.set_ylabel('Amount (₹)')
-        ax3.set_title('Monthly Payment Breakdown (First 24 months)')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3, axis='y')
-        
-        # 4. Cumulative Payments (middle right)
-        ax4 = fig.add_subplot(gs[1, 2])
-        ax4.stackplot(df['Month'], df['Cumulative_Principal'], df['Cumulative_Interest'],
-                     labels=['Principal', 'Interest'], alpha=0.7,
-                     colors=['#2ecc71', '#e74c3c'])
-        ax4.set_xlabel('Months')
-        ax4.set_ylabel('Cumulative Amount (₹)')
-        ax4.set_title('Cumulative Payments')
-        ax4.legend(loc='upper left')
-        ax4.grid(True, alpha=0.3)
-        
-        # 5. Heatmap of Interest Payment (bottom)
-        ax5 = fig.add_subplot(gs[2, :])
-        
-        # Create heatmap data (reshape into years)
-        years = self.tenure_months // 12
-        if years > 0:
-            heatmap_data = df['Interest'].values[:years*12].reshape(years, 12)
-            sns.heatmap(heatmap_data, annot=True, fmt='.0f', cmap='YlOrRd',
-                       xticklabels=[f'M{i+1}' for i in range(12)],
-                       yticklabels=[f'Year {i+1}' for i in range(years)],
-                       ax=ax5, cbar_kws={'label': 'Interest Payment (₹)'})
-            ax5.set_title('Interest Payment Heatmap (Monthly)', fontsize=12, fontweight='bold')
-        
-        plt.tight_layout()
-        plt.show()
-        
-        return df
-    
-    def sensitivity_analysis(self):
-        """Perform sensitivity analysis on interest rates"""
-        rates = np.linspace(max(0, self.annual_rate - 5), 
-                           self.annual_rate + 5, 11)
-        
-        results = []
-        for rate in rates:
-            calc = AdvancedEMICalculator(self.principal, rate, self.tenure_years)
-            emi = calc.calculate_emi()
-            df = calc.create_amortization_dataframe()
-            results.append({
-                'Rate (%)': rate,
-                'EMI': emi,
-                'Total Interest': df['Interest'].sum(),
-                'Total Payment': df['EMI'].sum()
-            })
-        
-        sensitivity_df = pd.DataFrame(results)
-        
-        # Plot sensitivity
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-        
-        axes[0].plot(sensitivity_df['Rate (%)'], sensitivity_df['EMI'], 
-                    'bo-', linewidth=2, markersize=8)
-        axes[0].set_xlabel('Interest Rate (%)')
-        axes[0].set_ylabel('Monthly EMI (₹)')
-        axes[0].set_title('EMI Sensitivity to Interest Rate')
-        axes[0].grid(True, alpha=0.3)
-        
-        axes[1].plot(sensitivity_df['Rate (%)'], sensitivity_df['Total Interest'], 
-                    'ro-', linewidth=2, markersize=8)
-        axes[1].set_xlabel('Interest Rate (%)')
-        axes[1].set_ylabel('Total Interest (₹)')
-        axes[1].set_title('Total Interest Sensitivity')
-        axes[1].grid(True, alpha=0.3)
-        
-        plt.suptitle('Sensitivity Analysis (±5% from base rate)', fontsize=12, fontweight='bold')
-        plt.tight_layout()
-        plt.show()
-        
-        return sensitivity_df
+    total_fv = fv_principal + fv_contributions
+    return total_fv, fv_principal, fv_contributions
 
-def main():
-    print("\n" + "="*70)
-    print("     ADVANCED EMI CALCULATOR WITH SCIENTIFIC LIBRARIES")
-    print("     (NumPy, Pandas, Matplotlib, Seaborn, SciPy)")
-    print("="*70)
-    
-    # Get inputs
-    principal = float(input("\nEnter loan amount (₹): "))
-    annual_rate = float(input("Enter annual interest rate (%): "))
-    tenure_years = float(input("Enter loan tenure (in years): "))
-    
-    # Create calculator instance
-    calc = AdvancedEMICalculator(principal, annual_rate, tenure_years)
-    
-    # Calculate EMI
-    emi = calc.calculate_emi()
-    df = calc.create_amortization_dataframe()
-    
-    # Display summary
-    print("\n" + "-"*70)
-    print(f"📊 LOAN SUMMARY")
-    print("-"*70)
-    print(f"Loan Amount:     ₹{principal:,.2f}")
-    print(f"Interest Rate:   {annual_rate}%")
-    print(f"Tenure:          {tenure_years} years ({calc.tenure_months} months)")
-    print(f"Monthly EMI:     ₹{emi:,.2f}")
-    print(f"Total Payment:   ₹{df['EMI'].sum():,.2f}")
-    print(f"Total Interest:  ₹{df['Interest'].sum():,.2f}")
-    print(f"Interest Ratio:  {(df['Interest'].sum()/principal)*100:.1f}%")
-    print("-"*70)
-    
-    # Show options
-    print("\n📈 AVAILABLE ANALYSES:")
-    print("1. Show Amortization Table")
-    print("2. Show Dashboard Visualizations")
-    print("3. Show Sensitivity Analysis")
-    print("4. Export Data to CSV")
-    print("5. All of the above")
-    
-    choice = input("\nSelect option (1-5): ")
-    
-    if choice in ['1', '5']:
-        pd.set_option('display.max_rows', 20)
-        print("\n" + df.to_string(index=False))
-        
-        # Show statistics
-        print("\n📊 STATISTICAL SUMMARY:")
-        print(df[['Interest', 'Principal']].describe())
-    
-    if choice in ['2', '5']:
-        calc.create_dashboard()
-    
-    if choice in ['3', '5']:
-        sensitivity_df = calc.sensitivity_analysis()
-        print("\n📊 SENSITIVITY ANALYSIS RESULTS:")
-        print(sensitivity_df.to_string(index=False))
-    
-    if choice in ['4', '5']:
-        filename = f"emi_analysis_{principal}_{annual_rate}_{tenure_years}.csv"
-        df.to_csv(filename, index=False)
-        print(f"\n✅ Data exported to {filename}")
+# Calculate future value
+fv_total, fv_principal, fv_contributions = calculate_future_value(
+    current_investment, 
+    monthly_contribution, 
+    periodic_rate, 
+    total_periods, 
+    n_per_year
+)
 
-if __name__ == "__main__":
-    main()
+# Calculate future value with inflation adjustment
+fv_real = fv_total / ((1 + inflation_rate/100) ** tenure_years)
+
+# Calculate after-tax future value
+if tax_rate > 0:
+    total_gain = fv_total - current_investment - (monthly_contribution * 12 * tenure_years)
+    tax_amount = total_gain * (tax_rate / 100)
+    fv_after_tax = fv_total - tax_amount
+else:
+    fv_after_tax = fv_total
+    tax_amount = 0
+
+# Create arrays for year-by-year calculation
+years = np.arange(0, tenure_years + 1)
+fv_yearly = []
+principal_yearly = []
+contributions_yearly = []
+
+for year in years:
+    periods = year * n_per_year
+    fv_year, fv_principal_year, fv_contrib_year = calculate_future_value(
+        current_investment, 
+        monthly_contribution, 
+        periodic_rate, 
+        periods, 
+        n_per_year
+    )
+    fv_yearly.append(fv_year)
+    principal_yearly.append(fv_principal_year)
+    contributions_yearly.append(fv_contrib_year)
+
+# Create DataFrame for plotting
+df_growth = pd.DataFrame({
+    'Year': years,
+    'Principal Value': principal_yearly,
+    'Contributions Value': contributions_yearly,
+    'Total Value': fv_yearly
+})
+
+# Melt dataframe for stacked area chart
+df_melted = df_growth.melt(id_vars=['Year'], 
+                           value_vars=['Principal Value', 'Contributions Value'],
+                           var_name='Component', 
+                           value_name='Value')
+
+# Main content area - Key Metrics
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric(
+        label="📈 Future Value (Before Tax)",
+        value=f"${fv_total:,.2f}",
+        delta=f"+${fv_total - current_investment:,.2f}"
+    )
+
+with col2:
+    st.metric(
+        label="💰 Total Contributions",
+        value=f"${(current_investment + monthly_contribution * 12 * tenure_years):,.2f}",
+        delta=f"${monthly_contribution * 12 * tenure_years:,.0f} from contributions"
+    )
+
+with col3:
+    st.metric(
+        label="📊 Total Returns",
+        value=f"${fv_total - current_investment - (monthly_contribution * 12 * tenure_years):,.2f}"
+    )
+
+with col4:
+    st.metric(
+        label="🏦 Real Value (After Inflation)",
+        value=f"${fv_real:,.2f}",
+        delta=f"{(1 - fv_real/fv_total)*100:.1f}% lost to inflation"
+    )
+
+if tax_rate > 0:
+    col5, col6 = st.columns(2)
+    with col5:
+        st.metric(
+            label="💰 After-Tax Value",
+            value=f"${fv_after_tax:,.2f}",
+            delta=f"-${tax_amount:,.2f} in taxes"
+        )
+
+st.markdown("---")
+
+# Create tabs for different visualizations
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Growth Chart", "📈 Year-by-Year Analysis", "💰 Contribution Impact", "📋 Detailed Report"])
+
+with tab1:
+    st.subheader("Investment Growth Over Time")
+    
+    # Create interactive line chart with Plotly
+    fig1 = go.Figure()
+    
+    fig1.add_trace(go.Scatter(
+        x=df_growth['Year'],
+        y=df_growth['Total Value'],
+        mode='lines+markers',
+        name='Total Value',
+        line=dict(color='green', width=3),
+        marker=dict(size=8),
+        hovertemplate='Year: %{x}<br>Value: $%{y:,.2f}<extra></extra>'
+    ))
+    
+    fig1.add_trace(go.Scatter(
+        x=df_growth['Year'],
+        y=df_growth['Principal Value'],
+        mode='lines',
+        name='Initial Investment Growth',
+        line=dict(color='blue', width=2, dash='dash'),
+        hovertemplate='Year: %{x}<br>Value: $%{y:,.2f}<extra></extra>'
+    ))
+    
+    fig1.update_layout(
+        title='Future Value Projection',
+        xaxis_title='Year',
+        yaxis_title='Value ($)',
+        hovermode='x unified',
+        template='plotly_white',
+        height=500
+    )
+    
+    st.plotly_chart(fig1, use_container_width=True)
+    
+    # Stacked area chart
+    st.subheader("Investment Composition Over Time")
+    fig2 = px.area(df_melted, x='Year', y='Value', color='Component',
+                   title='Composition of Investment Value',
+                   template='plotly_white',
+                   color_discrete_map={'Principal Value': 'blue', 'Contributions Value': 'orange'})
+    fig2.update_layout(height=450)
+    st.plotly_chart(fig2, use_container_width=True)
+
+with tab2:
+    st.subheader("Detailed Year-by-Year Growth")
+    
+    # Add annual return rate column
+    df_growth['Annual Return'] = df_growth['Total Value'].pct_change() * 100
+    df_growth['Annual Return'] = df_growth['Annual Return'].fillna(0)
+    
+    # Display table
+    display_df = df_growth.copy()
+    display_df['Total Value'] = display_df['Total Value'].apply(lambda x: f"${x:,.2f}")
+    display_df['Principal Value'] = display_df['Principal Value'].apply(lambda x: f"${x:,.2f}")
+    display_df['Contributions Value'] = display_df['Contributions Value'].apply(lambda x: f"${x:,.2f}")
+    display_df['Annual Return'] = display_df['Annual Return'].apply(lambda x: f"{x:.2f}%")
+    
+    st.dataframe(display_df, use_container_width=True)
+    
+    # Bar chart of annual growth
+    df_growth['Growth'] = df_growth['Total Value'].diff().fillna(0)
+    
+    fig3 = go.Figure()
+    fig3.add_trace(go.Bar(
+        x=df_growth['Year'][1:],
+        y=df_growth['Growth'][1:],
+        name='Annual Growth',
+        marker_color='lightgreen',
+        hovertemplate='Year: %{x}<br>Growth: $%{y:,.2f}<extra></extra>'
+    ))
+    
+    fig3.update_layout(
+        title='Annual Growth in Investment Value',
+        xaxis_title='Year',
+        yaxis_title='Growth ($)',
+        template='plotly_white',
+        height=400
+    )
+    
+    st.plotly_chart(fig3, use_container_width=True)
+
+with tab3:
+    st.subheader("Impact of Monthly Contributions")
+    
+    # Calculate scenarios with different contribution amounts
+    contribution_scenarios = [0, monthly_contribution/2, monthly_contribution, monthly_contribution*2]
+    scenario_labels = ['No Contribution', '50% Contribution', 'Base Contribution', 'Double Contribution']
+    
+    fig4 = go.Figure()
+    
+    for contrib, label in zip(contribution_scenarios, scenario_labels):
+        fv_scenario = []
+        for year in years:
+            periods = year * n_per_year
+            fv_year, _, _ = calculate_future_value(
+                current_investment, 
+                contrib, 
+                periodic_rate, 
+                periods, 
+                n_per_year
+            )
+            fv_scenario.append(fv_year)
+        
+        fig4.add_trace(go.Scatter(
+            x=years,
+            y=fv_scenario,
+            mode='lines',
+            name=label,
+            hovertemplate='Year: %{x}<br>Value: $%{y:,.2f}<extra></extra>'
+        ))
+    
+    fig4.update_layout(
+        title='Impact of Monthly Contributions on Future Value',
+        xaxis_title='Year',
+        yaxis_title='Future Value ($)',
+        hovermode='x unified',
+        template='plotly_white',
+        height=500
+    )
+    
+    st.plotly_chart(fig4, use_container_width=True)
+    
+    # Contribution vs Returns pie chart at end of tenure
+    total_principal = current_investment
+    total_contributions = monthly_contribution * 12 * tenure_years
+    total_returns = fv_total - total_principal - total_contributions
+    
+    fig5 = go.Figure(data=[go.Pie(
+        labels=['Initial Investment', 'Monthly Contributions', 'Investment Returns'],
+        values=[total_principal, total_contributions, total_returns],
+        hole=.3,
+        marker_colors=['blue', 'orange', 'green']
+    )])
+    
+    fig5.update_layout(
+        title='Final Value Composition',
+        height=450,
+        template='plotly_white'
+    )
+    
+    st.plotly_chart(fig5, use_container_width=True)
+
+with tab4:
+    st.subheader("Detailed Investment Report")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Investment Summary")
+        st.markdown(f"""
+        - **Initial Investment:** ${current_investment:,.2f}
+        - **Monthly Contribution:** ${monthly_contribution:,.2f}
+        - **Total Contributions:** ${(current_investment + monthly_contribution * 12 * tenure_years):,.2f}
+        - **Investment Tenure:** {tenure_years} years
+        - **Annual Interest Rate:** {interest_rate}%
+        - **Compounding Frequency:** {compounding_frequency}
+        """)
+    
+    with col2:
+        st.markdown("### Returns Summary")
+        st.markdown(f"""
+        - **Total Future Value:** ${fv_total:,.2f}
+        - **Total Returns:** ${fv_total - current_investment - (monthly_contribution * 12 * tenure_years):,.2f}
+        - **Real Value (Inflation Adj.):** ${fv_real:,.2f}
+        - **Annualized Return:** {((fv_total / (current_investment + monthly_contribution * 12 * tenure_years)) ** (1/tenure_years) - 1) * 100:.2f}%
+        """)
+    
+    if tax_rate > 0:
+        st.markdown("### Tax Impact")
+        st.markdown(f"""
+        - **Tax Rate:** {tax_rate}%
+        - **Tax Amount:** ${tax_amount:,.2f}
+        - **After-Tax Value:** ${fv_after_tax:,.2f}
+        """)
+    
+    # Download button for data
+    csv = df_growth.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Growth Data (CSV)",
+        data=csv,
+        file_name=f"investment_growth_{datetime.now().strftime('%Y%m%d')}.csv",
+        mime="text/csv"
+    )
+
+st.markdown("---")
+st.markdown("### 📝 Notes")
+st.markdown("""
+- This calculator assumes contributions are made at the beginning of each period
+- Returns are reinvested and compounded according to the selected frequency
+- Inflation adjustment shows the purchasing power of your future value in today's dollars
+- Tax calculation is simplified and may not reflect your actual tax situation
+""")
